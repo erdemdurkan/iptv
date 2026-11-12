@@ -1,120 +1,206 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Barkod Okuyucu</title>
-    <script src="https://unpkg.com/@zxing/library@latest"></script>
-    <link rel="manifest" href="manifest.json">
-    <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('service-worker.js')
-                .then(() => console.log("Service Worker Kaydedildi!"))
-                .catch(error => console.log("Service Worker Hatası:", error));
-        }
-    </script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            margin: 0;
-            padding: 0;
-            background: white;
-            color: black;
-        }
-        #scanner-container {
-            padding: 10px;
-        }
-        video {
-            width: 100%;
-            max-width: 500px;
-            height: auto;
-            border: 2px solid black;
-            margin-top: 10px;
-        }
-        #bottom-menu {
-            position: fixed;
-            bottom: 0;
-            width: 100%;
-            display: flex;
-            justify-content: space-around;
-            padding: 15px;
-            background: black;
-            color: white;
-        }
-        button {
-            padding: 10px;
-            font-size: 18px;
-            border: none;
-            cursor: pointer;
-            border-radius: 5px;
-            color: white;
-        }
-        .start-btn { background: #4CAF50; }
-        .list-btn { background: orange; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="FAST TV">
+  <title>FAST TV - iOS 9</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      background-color: #0d0d0d;
+      color: #f1f1f1;
+      font-family: -apple-system, Helvetica, Arial, sans-serif;
+      display: -webkit-flex;
+      display: flex;
+      -webkit-flex-direction: column;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    /* Üst Video Alanı */
+    #player-box {
+      width: 100%;
+      background: #000;
+      position: relative;
+      -webkit-flex-shrink: 0;
+      flex-shrink: 0;
+    }
+    video {
+      width: 100%;
+      height: 230px;
+      display: block;
+      background: #000;
+    }
+    /* M3U Yükleme ve Arama Çubuğu */
+    #controls {
+      padding: 8px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #2c2c2c;
+      display: -webkit-flex;
+      display: flex;
+      gap: 6px;
+      -webkit-flex-shrink: 0;
+      flex-shrink: 0;
+    }
+    input {
+      background: #262626;
+      border: 1px solid #3a3a3a;
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+    }
+    #m3u-url { -webkit-flex: 2; flex: 2; }
+    #search { -webkit-flex: 1; flex: 1; }
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    button:active { background: #1d4ed8; }
+    /* Kanal Listesi */
+    #channel-list {
+      -webkit-flex: 1;
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      list-style: none;
+    }
+    .channel-item {
+      padding: 13px 14px;
+      border-bottom: 1px solid #1f1f1f;
+      font-size: 15px;
+      display: -webkit-flex;
+      display: flex;
+      -webkit-justify-content: space-between;
+      justify-content: space-between;
+    }
+    .channel-item.active {
+      background: #1e293b;
+      color: #60a5fa;
+      font-weight: bold;
+    }
+    .status-msg {
+      padding: 20px;
+      text-align: center;
+      color: #888;
+      font-size: 14px;
+    }
+  </style>
 </head>
 <body>
 
-    <h1>Barkod Okuyucu</h1>
+  <div id="player-box">
+    <video id="video" controls playsinline webkit-playsinline autoplay></video>
+  </div>
 
-    <!-- Barkod Okuyucu -->
-    <div id="scanner-container">
-        <video id="video" autoplay></video>
-    </div>
+  <div id="controls">
+    <input type="text" id="m3u-url" placeholder="M3U linkini yapıştır...">
+    <button onclick="loadM3U()">Yükle</button>
+    <input type="text" id="search" placeholder="Kanal ara..." onkeyup="filterChannels()">
+  </div>
 
-    <div id="bottom-menu">
-        <button class="start-btn" onclick="scanBarcode()">📷 Barkod Okuyucu</button>
-        <button class="list-btn" onclick="goToList()">📜 Listeyi Göster</button>
-    </div>
+  <ul id="channel-list">
+    <li class="status-msg">Yukarıya M3U bağlantısını girip Yükle'ye basın.</li>
+  </ul>
 
-    <script>
-        let scanner;
-        let isScanning = false;
-        let cameraStream;
-        let barcodeList = JSON.parse(localStorage.getItem("barcodeList")) || []; // 📌 Daha önce eklenen barkodları koru
+  <script>
+    var allChannels = [];
+    var video = document.getElementById('video');
+    var listEl = document.getElementById('channel-list');
+    var urlInput = document.getElementById('m3u-url');
 
-        // Kamera ve barkod okuyucu başlatma
-        function startScanner() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                alert("Tarayıcınız kamerayı desteklemiyor!");
-                return;
-            }
+    // Kayıtlı M3U varsa otomatik getir
+    window.onload = function() {
+      var savedUrl = localStorage.getItem('fasttv_m3u');
+      if (savedUrl) {
+        urlInput.value = savedUrl;
+        loadM3U();
+      }
+    };
 
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-                .then(function (stream) {
-                    let videoElement = document.getElementById("video");
-                    videoElement.srcObject = stream;
-                    cameraStream = stream;
-                    scanner = new ZXing.BrowserMultiFormatReader();
-                    scanner.decodeOnceFromVideoDevice(undefined, 'video') // Barkod okuma başlatılıyor
-                        .then((result) => {
-                            const barcodeData = result.text;
-                            barcodeList.push(barcodeData); // 📌 Listeye her okutulan barkodu ekle
-                            localStorage.setItem("barcodeList", JSON.stringify(barcodeList)); // 📌 Barkodları kaydet
-                        })
-                        .catch((err) => {
-                            console.error("Barkod okuma hatası:", err);
-                        });
-                })
-                .catch(function (error) {
-                    alert("Kamera erişim hatası: " + error.message);
-                    console.error("Kamera erişim hatası:", error);
-                });
+    function loadM3U() {
+      var url = urlInput.value.trim();
+      if (!url) return;
+      localStorage.setItem('fasttv_m3u', url);
+      listEl.innerHTML = '<li class="status-msg">Kanallar yükleniyor...</li>';
+
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+          if (xhr.status === 200) {
+            parseM3U(xhr.responseText);
+          } else {
+            listEl.innerHTML = '<li class="status-msg">Liste alınamadı (CORS veya bağlantı hatası).</li>';
+          }
         }
+      };
+      xhr.send();
+    }
 
-        function scanBarcode() {
-            if (!scanner || isScanning) return;
-            isScanning = true;
-            startScanner();
-            setTimeout(() => isScanning = false, 1000);
+    function parseM3U(data) {
+      var lines = data.split(/\r?\n/);
+      allChannels = [];
+      var currentName = '';
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf('#EXTINF:') === 0) {
+          var commaIndex = line.lastIndexOf(',');
+          currentName = commaIndex !== -1 ? line.substring(commaIndex + 1).trim() : 'Kanal ' + (allChannels.length + 1);
+        } else if (line.indexOf('http') === 0) {
+          allChannels.push({ name: currentName || 'Bilinmeyen Kanal', url: line });
+          currentName = '';
         }
+      }
+      renderChannels(allChannels);
+    }
 
-        function goToList() {
-            window.location.href = "index2.html";
+    function renderChannels(channels) {
+      if (channels.length === 0) {
+        listEl.innerHTML = '<li class="status-msg">Kanal bulunamadı.</li>';
+        return;
+      }
+      var html = '';
+      // Performans için ilk 300 kanalı bas (eski RAM dostu)
+      var limit = Math.min(channels.length, 300);
+      for (var i = 0; i < limit; i++) {
+        html += '<li class="channel-item" onclick="playChannel(\'' + channels[i].url.replace(/'/g, "\\'") + '\', this)">' +
+                '<span>' + channels[i].name + '</span>' +
+                '</li>';
+      }
+      listEl.innerHTML = html;
+    }
+
+    function playChannel(streamUrl, el) {
+      var items = document.getElementsByClassName('channel-item');
+      for (var i = 0; i < items.length; i++) {
+        items[i].className = 'channel-item';
+      }
+      el.className = 'channel-item active';
+      video.src = streamUrl;
+      video.play();
+    }
+
+    function filterChannels() {
+      var q = document.getElementById('search').value.toLowerCase();
+      var filtered = [];
+      for (var i = 0; i < allChannels.length; i++) {
+        if (allChannels[i].name.toLowerCase().indexOf(q) !== -1) {
+          filtered.push(allChannels[i]);
         }
-
-        startScanner();
-    </script>
+      }
+      renderChannels(filtered);
+    }
+  </script>
 </body>
 </html>
